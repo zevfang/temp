@@ -67,17 +67,21 @@ func (s *SafeMap) Run() {
 func main() {
 	m := NewSafeMap()
 	m.Run()
-	for i := 0; i < 5; i++ {
-		go func(n int,dic *SafeMap) {
+	for i := 0; i < 100; i++ {
+		go func(n int, dic *SafeMap) {
 			item := &Item{
-				NickName: fmt.Sprintf("nikename_%s", n),
+				NickName: fmt.Sprintf("nikename_%d", n),
 				Age:      rand.Intn(100),
 			}
 			m.Insert(fmt.Sprintf("k_%d", n), item)
-		}(i,m)
+		}(i, m)
+	}
+	time.Sleep(time.Second * 3)
+
+	for k, v := range m.queue {
+		fmt.Println(k, v)
 	}
 
-	time.Sleep(time.Second * 3)
-	fmt.Println(m)
+	//fmt.Println(m)
 
 }
