@@ -2,13 +2,16 @@ package main
 
 import (
 	"sync"
+	"fmt"
+	"time"
+	"container/heap"
 )
 
 /***********************线程安全的优先级加减*****************************/
 
 type safepending struct {
 	pending int
-	*sync.RWMutex
+	sync.RWMutex
 }
 
 func (s *safepending) Inc() {
@@ -31,21 +34,8 @@ func (s *safepending) Get() int {
 }
 
 /*
-*************小顶堆的工作池****************
+*************小顶堆算法的工作池****************
 */
-type Request struct {
-	fn   func() int
-	data []byte
-	op   int
-	c    chan int
-}
-
-type Worker struct {
-	req     chan Request
-	pending int
-	index   int
-	done    chan struct{}
-}
 
 type Pool []*Worker
 
@@ -54,7 +44,7 @@ func (p Pool) Len() int {
 }
 
 func (p Pool) Less(i, j int) bool {
-	return p[i].pending < p[j].pending
+	return p[i].pending.Get() < p[j].pending.Get()
 }
 
 func (p Pool) Swap(i, j int) {
@@ -78,27 +68,44 @@ func (p *Pool) Pop() interface{} {
 	return item
 }
 
-/******************动态增删任务实现（独立线程访问Map，使Map变的安全）*******************/
-type job struct {
+/****************** 线程池实现 *******************/
+type Job struct {
+	fn     func() int
+	result chan string
+}
+
+//type DataType struct {
+//	v string
+//}
+
+type Worker struct {
+	jobqueue  map[string]*Job
+	broadcast chan string
+	jobadd    chan *jobPair
+	jobdel    chan string
+	pending   safepending
+	index     int
+	done      chan struct{}
 }
 
 type jobPair struct {
 	key   string
-	value *job
+	value *Job
 }
 
-type worker struct {
-	jobqueue map[string]*job
-	jobadd   chan *jobPair
-	jobdel   chan string
-	pending  safepending
+func NewWorker(idx, queue_limit, source_limit, jobreq_limit int) *Worker {
+	return &Worker{
+		jobqueue:  make(map[string]*Job, queue_limit),
+		broadcast: make(chan string, source_limit),
+		jobadd:    make(chan *jobPair, jobreq_limit),
+		jobdel:    make(chan string, jobreq_limit),
+		pending:   safepending{0, sync.RWMutex{}},
+		index:     idx,
+		done:      make(chan struct{}),
+	}
 }
 
-func (w *worker) Run() {
-
-}
-
-func (w *worker) PushJob(user string, job *job) {
+func (w *Worker) PushJob(user string, job *Job) {
 	pair := &jobPair{
 		key:   user,
 		value: job,
@@ -106,46 +113,87 @@ func (w *worker) PushJob(user string, job *job) {
 	w.jobadd <- pair
 }
 
-func (w *worker) RemoveJob(user string) {
+func (w *Worker) RemoveJob(user string) {
 	w.jobdel <- user
 }
 
-func (w *worker) insertJob(key string, value *job) error {
+func (w *Worker) insertJob(key string, value *Job) {
 	w.jobqueue[key] = value
 	w.pending.Inc()
-	return nil
 }
 
-func (w *worker) deleteJob(key string) {
+func (w *Worker) deleteJob(key string) {
 	delete(w.jobqueue, key)
 	w.pending.Dec()
 }
 
-/*****************线程池实现*****************/
-var (
-	MaxWorks = 10000
-	MaxQueue = 1000 //通道缓存队列数
-)
-
-func (w *Worker) Run() {
+func (w *Worker) Run(wg *sync.WaitGroup) {
+	wg.Add(1)
 	go func() {
-		for {
-			select {
-			case req := <-w.req:
-				req.c <- req.fn()
-			case <-w.done:
-				break
+		fmt.Println("新建一个goruntine，工作池标识：", w.index)
+		defer wg.Done()
+		ticker := time.NewTicker(time.Second * 60)
+		select {
+		case data := <-w.broadcast:
+			for k, v := range w.jobqueue {
+				fmt.Println(data, k, v)
 			}
+		case jobpair := <-w.jobadd:
+			w.insertJob(jobpair.key, jobpair.value)
+			fmt.Println("添加任务",jobpair.key)
+		case key := <-w.jobdel:
+			w.deleteJob(key)
+			fmt.Println("删除任务")
+		case <-ticker.C:
+			fmt.Println("一分钟报警")
+		case <-w.done:
+			fmt.Println("退出工作池", w.index, "exit")
+			break
 		}
 	}()
 }
 
 func (w *Worker) Stop() {
-	w.done <- struct{}{}
+	go func() {
+		w.done <- struct{}{}
+	}()
 }
+
+/*****************线程池实现*****************/
+var (
+	MaxWorks   = 2
+	MaxQueue   = 5 //通道缓存队列数
+	MaxSource  = 1
+	MaxJobCurd = 1
+)
 
 func main() {
 
+	// 初始化工作池
+	pool := new(Pool)
+	fmt.Println("初始化工作池：", pool)
+	wg := &sync.WaitGroup{}
+	for i := 0; i < MaxWorks; i++ {
+		//创建工作者
+		work := NewWorker(i, MaxQueue, MaxSource, MaxJobCurd)
+		work.Run(wg)
+		//加入工作池
+		heap.Push(pool, work)
+	}
+
+	fmt.Println("工作池：", pool)
+
+	worker := heap.Pop(pool).(*Worker)
+	fmt.Println("获取一个工作组：", worker)
+	worker.PushJob("zhangsan", &Job{
+		fn: func() int {
+			return 120
+		},
+		result: make(chan string),
+	})
+	fmt.Println("添加任务,总数：", worker.pending.Get())
+
+	wg.Wait()
 	//fmt.Println("初始化工作池")
 	//pool := new(Pool)
 	//for i := 0; i < 15; i++ {
