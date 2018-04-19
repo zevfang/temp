@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+
+/*
+	实际上该方式就是保证map操作对外只有一个接口，其他线程必须通过该接口才能访问map是，从而实现了线程安全的map
+*/
 type Item struct {
 	NickName string
 	Age      int
