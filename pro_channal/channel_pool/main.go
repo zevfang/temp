@@ -1,10 +1,11 @@
 package main
 
 import (
-	"sync"
-	"fmt"
-	"time"
 	"container/heap"
+	"fmt"
+	"math/rand"
+	"sync"
+	"time"
 )
 
 /***********************线程安全的优先级加减*****************************/
@@ -35,7 +36,7 @@ func (s *safepending) Get() int {
 
 /*
 *************小顶堆算法的工作池****************
-*/
+ */
 
 type Pool []*Worker
 
@@ -70,13 +71,11 @@ func (p *Pool) Pop() interface{} {
 
 /****************** 线程池实现 *******************/
 type Job struct {
-	fn     func() int
-	result chan string
 }
 
-//type DataType struct {
-//	v string
-//}
+func (job *Job) Run() {
+	fmt.Println(fmt.Sprintf("job is %d", rand.Intn(100)))
+}
 
 type Worker struct {
 	jobqueue  map[string]*Job
@@ -135,12 +134,15 @@ func (w *Worker) Run(wg *sync.WaitGroup) {
 		ticker := time.NewTicker(time.Second * 60)
 		select {
 		case data := <-w.broadcast:
-			for k, v := range w.jobqueue {
-				fmt.Println(data, k, v)
+			fmt.Println(len(w.jobqueue))
+
+			for _, job := range w.jobqueue {
+				fmt.Println(data)
+				job.Run()
 			}
 		case jobpair := <-w.jobadd:
 			w.insertJob(jobpair.key, jobpair.value)
-			fmt.Println("添加任务",jobpair.key)
+			fmt.Println("添加任务", jobpair.key)
 		case key := <-w.jobdel:
 			w.deleteJob(key)
 			fmt.Println("删除任务")
@@ -161,7 +163,7 @@ func (w *Worker) Stop() {
 
 /*****************线程池实现*****************/
 var (
-	MaxWorks   = 2
+	MaxWorks   = 3
 	MaxQueue   = 5 //通道缓存队列数
 	MaxSource  = 1
 	MaxJobCurd = 1
@@ -176,24 +178,37 @@ func main() {
 	for i := 0; i < MaxWorks; i++ {
 		//创建工作者
 		work := NewWorker(i, MaxQueue, MaxSource, MaxJobCurd)
-		work.Run(wg)
 		//加入工作池
 		heap.Push(pool, work)
 	}
 
 	fmt.Println("工作池：", pool)
 
-	worker := heap.Pop(pool).(*Worker)
-	fmt.Println("获取一个工作组：", worker)
-	worker.PushJob("zhangsan", &Job{
-		fn: func() int {
-			return 120
-		},
-		result: make(chan string),
-	})
-	fmt.Println("添加任务,总数：", worker.pending.Get())
+	//worker := heap.Pop(pool).(*Worker)
+	//fmt.Println("获取一个工作组：", worker)
+
+	//worker2 := heap.Pop(pool).(*Worker)
+	//fmt.Println("获取一个工作组：", worker2)
+	//
+	//worker3 := heap.Pop(pool).(*Worker)
+	//fmt.Println("获取一个工作组：", worker3)
+
+	//worker.PushJob("a", &Job{
+	//	fn: func() int {
+	//		return 10
+	//	},
+	//	result: make(chan string),
+	//})
+
+	work := heap.Pop(pool).(*Worker)
+	work.PushJob("a", &Job{})
+	work.PushJob("b", &Job{})
+	work.broadcast <- "start"
+	work.Run(wg)
+	//fmt.Println("添加任务,总数：", worker.pending.Get())
 
 	wg.Wait()
+
 	//fmt.Println("初始化工作池")
 	//pool := new(Pool)
 	//for i := 0; i < 15; i++ {
